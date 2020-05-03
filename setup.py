@@ -12,7 +12,7 @@ with open("./oidc_provider/version.py") as fp:
 os.chdir(os.path.normpath(os.path.join(os.path.abspath(__file__), os.pardir)))
 
 setup(
-    name='django-oidc-provider',
+    name='django3-oidc-provider',
     version=version['__version__'],
     packages=find_packages(),
     include_package_data=True,
