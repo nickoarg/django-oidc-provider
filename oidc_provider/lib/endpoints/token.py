@@ -5,7 +5,7 @@ import logging
 from django.contrib.auth import authenticate
 
 from django.http import JsonResponse
-
+from oidc_provider import settings
 from oidc_provider.lib.errors import (
     TokenError,
     UserAuthError,
@@ -21,7 +21,6 @@ from oidc_provider.models import (
     Code,
     Token,
 )
-from oidc_provider import settings
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +134,27 @@ class TokenEndpoint(object):
             logger.debug('[Token] Invalid grant type: %s', self.params['grant_type'])
             raise TokenError('unsupported_grant_type')
 
+    def validate_requested_scopes(self):
+        """
+        Handling validation of requested scope for grant_type=[password|client_credentials]
+        """
+        token_scopes = []
+        if self.params['scope']:
+            # See https://tools.ietf.org/html/rfc6749#section-3.3
+            # The value of the scope parameter is expressed
+            # as a list of space-delimited, case-sensitive strings
+            for scope_requested in self.params['scope'].split(' '):
+                if scope_requested in self.client.scope:
+                    token_scopes.append(scope_requested)
+                else:
+                    logger.debug('[Token] The request scope %s is not supported by client %s',
+                                 scope_requested, self.client.client_id)
+                    raise TokenError('invalid_scope')
+        # if no scopes requested assign client's scopes
+        else:
+            token_scopes.extend(self.client.scope)
+        return token_scopes
+
     def create_response_dic(self):
         if self.params['grant_type'] == 'authorization_code':
             return self.create_code_response_dic()
@@ -231,10 +251,11 @@ class TokenEndpoint(object):
     def create_access_token_response_dic(self):
         # See https://tools.ietf.org/html/rfc6749#section-4.3
 
+        token_scopes = self.validate_requested_scopes()
         token = create_token(
             self.user,
             self.client,
-            self.params['scope'].split(' '))
+            token_scopes)
 
         id_token_dic = create_id_token(
             token=token,
@@ -255,15 +276,18 @@ class TokenEndpoint(object):
             'expires_in': settings.get('OIDC_TOKEN_EXPIRE'),
             'token_type': 'bearer',
             'id_token': encode_id_token(id_token_dic, token.client),
+            'scope': ' '.join(token.scope),
         }
 
     def create_client_credentials_response_dic(self):
         # See https://tools.ietf.org/html/rfc6749#section-4.4.3
 
+        token_scopes = self.validate_requested_scopes()
+
         token = create_token(
             user=None,
             client=self.client,
-            scope=self.client.scope)
+            scope=token_scopes)
 
         token.save()
 
@@ -271,7 +295,7 @@ class TokenEndpoint(object):
             'access_token': token.access_token,
             'expires_in': settings.get('OIDC_TOKEN_EXPIRE'),
             'token_type': 'bearer',
-            'scope': self.client._scope,
+            'scope': ' '.join(token.scope),
         }
 
     @classmethod
